@@ -241,6 +241,8 @@ App state lives in the OS user-data dir — delete it along with the app to full
 
 ## Build from source
 
+For a separate local Claude preview with its own settings and credentials, see [the local preview guide](docs/local-preview.md).
+
 To build your own installer, use Node.js 22.15+ on the **target** OS (electron-builder can't cross-build a macOS `.dmg` on Windows, or vice-versa).
 
 ```bash

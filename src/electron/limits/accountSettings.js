@@ -153,10 +153,10 @@ function defaultAccountStatus(entry, settings, env) {
 
 // settingsForRenderer — the *Configured/*Source key pairs plus provider extras
 // (env probes, discovery-driven lanes like zcode-auto and cline-signin).
-function accountStatusProjection(settings, env = process.env) {
+function accountStatusProjection(settings, env = process.env, options = {}) {
   const out = {};
   for (const entry of LIMIT_PROVIDER_REGISTRY) {
-    const discovered = entry.discover ? entry.discover(env) : null;
+    const discovered = entry.discover && options.discover !== false ? entry.discover(env) : null;
     if (entry.accountStatus) {
       Object.assign(out, entry.accountStatus({ settings, env, discovered }));
     } else if (entry.status) {
