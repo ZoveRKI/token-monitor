@@ -1283,3 +1283,30 @@ test('transient status (unavailable) preserves lastGood windows so stale data is
   assert.equal(row.windows[0].usedPercent, 20);
   runtime.stop();
 });
+
+test('complete account inventories retire missing rows while partial refreshes retain peers', async () => {
+  let rows = [providerRow('claude', 'personal', 'Max'), providerRow('claude', 'team', 'Team')];
+  let complete = true;
+  const runtime = createLimitsRuntime({ limitProviders: ['claude'] }, runtimeDeps({
+    autoRetry: false,
+    probeProvider: async (_provider, config, context) => {
+      if (complete) context.onAccountInventory(rows.map((row) => row.accountKey));
+      const key = config.limitRefreshScope?.accountKey;
+      return key ? rows.filter((row) => row.accountKey === key) : rows;
+    }
+  }));
+  await runtime.refresh({ provider: 'claude' }, 'manual');
+  rows = [rows[0]];
+  complete = false;
+  await runtime.refresh({ provider: 'claude', accountKey: 'personal' }, 'manual');
+  assert.equal(runtime.getSnapshot().providers.length, 2);
+  await runtime.refresh({ provider: 'claude' }, 'manual');
+  assert.equal(runtime.getSnapshot().providers.find((row) => row.accountKey === 'team').status, 'unavailable');
+  complete = true;
+  await runtime.refresh({ provider: 'claude' }, 'manual');
+  assert.deepEqual(runtime.getSnapshot().providers.map((row) => row.accountKey), ['personal']);
+  rows = [];
+  await runtime.refresh({ provider: 'claude', accountKey: 'personal' }, 'manual');
+  assert.deepEqual(runtime.getSnapshot().providers, []);
+  runtime.stop();
+});

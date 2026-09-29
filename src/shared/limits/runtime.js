@@ -574,6 +574,17 @@ function createLimitsRuntime(initialOptions = {}, deps = {}) {
       && normalizedRows[0].status !== 'ok';
     if (genericTerminal && !dispatch.accountScoped) lane.identities.clear();
 
+    // Only a completed authoritative enumeration may retire disappeared rows.
+    // Ordinary partial probes and outages must retain their previous readings.
+    if (dispatch.accountInventory) {
+      for (const identityKey of expected) {
+        if (dispatch.accountScoped && identityKey !== dispatch.identityKey) continue;
+        if (!dispatch.accountInventory.has(identityKey) && accountRevisionStillCurrent(lane, identityKey, dispatch)) {
+          lane.identities.delete(identityKey);
+        }
+      }
+    }
+
     for (const row of normalizedRows) {
       let identityKey = rowIdentityKey(row);
       if (identityKey === `${lane.provider}:*` && dispatch.accountScoped) identityKey = dispatch.identityKey;
@@ -599,6 +610,7 @@ function createLimitsRuntime(initialOptions = {}, deps = {}) {
     if (!dispatch.accountScoped && !genericTerminal) {
       for (const identityKey of expected) {
         if (represented.has(identityKey) || !accountRevisionStillCurrent(lane, identityKey, dispatch)) continue;
+        if (dispatch.accountInventory && !dispatch.accountInventory.has(identityKey)) continue;
         applyAttempt(lane, identityKey, { provider: lane.provider }, 'unavailable', attemptAt);
       }
     }
@@ -636,6 +648,12 @@ function createLimitsRuntime(initialOptions = {}, deps = {}) {
           deadlineMs,
           scope: cloneValue(intent.scope),
           reason: intent.reason,
+          onAccountInventory(accountKeys) {
+            if (!Array.isArray(accountKeys)) return;
+            dispatch.accountInventory = new Set(accountKeys.map((accountKey) => (
+              rowIdentityKey({ provider: lane.provider, accountKey })
+            )));
+          },
           onRetryAfter(value) {
             const parsed = Number(value);
             if (!Number.isFinite(parsed) || parsed <= 0) return;

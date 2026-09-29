@@ -2,7 +2,28 @@
 
 本地预览用于在保留正式版的同时检查 Claude 额度问题。它使用独立应用身份和数据目录，初始没有凭据，也不扫描本机用量。启动后，在预览应用的 Claude 设置中手动填写自己的 Web `sessionKey`；这会向 Claude 发出真实请求。
 
-预览运行当前工作区的代码，可用于验证 Issue #876 的组织选择修复及后续修改。当前策略优先选择明确有订阅的聊天组织，最终只显示一个组织；多个订阅组织仍按接口返回顺序选择。
+预览运行当前工作区的代码，可用于验证 Issue #876 的组织选择修复及后续修改。当前策略按账号与组织分别显示多个订阅，隐藏明确 Free，以及套餐未知且成功返回空额度的组织。
+
+## 离线模拟账号
+
+没有真实账号时，在项目根目录运行 `npm run preview -- --mock` 启动 **Token Monitor Preview Mock**。若希望使用独立 `.app`，运行 `npm run pack:preview -- --mock`，再打开本次输出的 **Token Monitor Preview Mock.app**。
+
+`--mock` 使用 `tmp/local-preview/mock-runtime/`，与真实 Cookie 预览的 `runtime/` 分开。模拟模式的 Claude transport 只返回内存数据，不会将任何输入的 key 发往真实网站，也不读取浏览器或真实预览中的 Cookie。正式应用和普通预览仍使用原来的真实请求。
+
+在模拟预览的「设置 → AI 工具额度 → Claude Code 选项」中，复制下表右列的完整值，点击「保存 Cookie」，关闭设置后切换到「额度」视图。换一个值再保存即可切换场景，无需重新启动。每组数据都附带一个空额度 Free 组织，用来确认它不会出现。
+
+| 模拟账号 | 场景 | 复制到 Cookie 输入框的内容 |
+| --- | --- | --- |
+| user1 | 两个 Team：Design Studio、Research Lab | `sessionKey=sk-ant-preview-user1` |
+| user2 | Personal Pro + Company Team | `sessionKey=sk-ant-preview-user2` |
+| user3 | Personal Max + 两个 Team；Max 另有 Fable 周额度 | `sessionKey=sk-ant-preview-user3` |
+| user4 | 只有 Free：显示无付费额度提示 | `sessionKey=sk-ant-preview-user4` |
+| user5 | Pro 正常、一个 Team 返回无权限 | `sessionKey=sk-ant-preview-user5` |
+| user6 | Team 订阅存在，但接口没有额度窗口 | `sessionKey=sk-ant-preview-user6` |
+
+这些是公开的测试字符串，不是真实登录凭据，仅供模拟模式使用。账号名是说明标签，输入框仍只接受 `sessionKey=…` 或裸 `sk-ant-…`，不要粘贴 `user1-sessionKey:` 前缀。未知的 key 会显示 Cookie 校验失败。
+
+模拟额度的使用率固定，重置时间以本次模拟应用启动时间计算。user3 应显示：Personal Max 的 Session 剩余 88%、Weekly 剩余 66%、Fable 剩余 93%；Design Studio Team 剩余 55%／33%；Research Lab Team 剩余 10%／7%。测试数据位于 `src/electron/preview/claudeMock.js`。
 
 ## 启动与检查
 
@@ -52,4 +73,4 @@
 
 后台汇率刷新、tokscale npm 检查、应用更新检查、macOS Widget 注册与发布、启动项、Discord 和自动导出均关闭。正式版可以继续运行；预览不会替换或卸载它。
 
-这是应用层的开发隔离，不是操作系统沙箱。应用仍以当前用户权限运行，后续代码修改可能改变隔离行为。手动录入 Cookie 后，额度读取和 Cookie 续期会向 Claude 发出真实请求。如果复制的是浏览器或正式版使用的同一个 Claude 会话，服务端的会话续期、轮换或失效仍可能影响其他使用者；本地目录隔离无法隔离这类服务端状态。
+这是应用层的开发隔离，不是操作系统沙箱。应用仍以当前用户权限运行，后续代码修改可能改变隔离行为。普通预览手动录入 Cookie 后，额度读取和 Cookie 续期会向 Claude 发出真实请求。如果复制的是浏览器或正式版使用的同一个 Claude 会话，服务端的会话续期、轮换或失效仍可能影响其他使用者；本地目录隔离无法隔离这类服务端状态。`--mock` 的 Claude 请求只由内存 transport 响应，不产生这些真实请求。

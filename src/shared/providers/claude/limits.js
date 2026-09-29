@@ -12,6 +12,7 @@ const path = require('node:path');
 const { BROWSER_USER_AGENT } = require('../../browserUserAgent');
 const { normalizeLimitProvider } = require('../../limits/core');
 const { abortError } = require('../../probeDeadline');
+const { parseRetryAfterHeader } = require('../../limits/retryPolicy');
 const { hashKey } = require('../../hashKey');
 const {
   PLAN_LABEL_ALIASES,
@@ -395,7 +396,14 @@ function readMacKeychainSecret(service, deps = {}) {
 
 function fetchClaudeWebJson(url, headers, deps = {}, options = {}) {
   const viaChromium = typeof deps.claudeWebFetch === 'function';
-  const webDeps = viaChromium ? { ...deps, fetch: deps.claudeWebFetch } : deps;
+  const transport = viaChromium ? deps.claudeWebFetch : (deps.fetch || fetch);
+  const webDeps = {
+    ...deps,
+    fetch: (requestUrl, init) => transport(requestUrl, {
+      ...init,
+      ...(deps.signal ? { signal: AbortSignal.any([deps.signal, init.signal].filter(Boolean)) } : {})
+    })
+  };
   // Chromium sends its own browser agent, and setting one here would override it
   // with a version that no longer matches the runtime. undici sends none at all,
   // and claude.ai's Cloudflare answers both that and an honest
@@ -404,7 +412,11 @@ function fetchClaudeWebJson(url, headers, deps = {}, options = {}) {
   const webHeaders = viaChromium ? headers : { ...headers, 'user-agent': BROWSER_USER_AGENT };
   return fetchJson(url, webHeaders, webDeps, {
     forbiddenIsUnauthorized: true,
-    onResponse: options.onResponse
+    onResponse: async (response) => {
+      const retryAfter = parseRetryAfterHeader(response.headers?.get?.('retry-after'), (deps.now || Date.now)());
+      if (retryAfter !== null && response.status >= 400) deps.onRetryAfter?.(retryAfter);
+      await options.onResponse?.(response);
+    }
   });
 }
 
@@ -732,24 +744,24 @@ function claudeSeatTier(membership) {
   return PLAN_LABEL_ALIASES[plan] ? plan : '';
 }
 
-function selectClaudeWebOrganization(organizations) {
-  const candidates = organizations.filter((candidate) => claudeWebOrganizationId(candidate));
-  const hasChatCapability = (candidate) => (
-    claudeWebOrganizationCapabilities(candidate).has('chat')
-  );
-  const hasChatSubscription = (candidate) => (
-    hasChatCapability(candidate)
-    && claudeCapabilityPlan(claudeWebOrganizationCapabilities(candidate), candidate)
-  );
-  const isApiOnly = (candidate) => {
-    const capabilities = claudeWebOrganizationCapabilities(candidate);
-    return capabilities.size === 1 && capabilities.has('api');
-  };
-  return candidates.find(hasChatSubscription)
-    || candidates.find(hasChatCapability)
-    || candidates.find((candidate) => !isApiOnly(candidate))
-    || candidates[0]
-    || null;
+function claudeWebOrganizationCandidates(organizations) {
+  const seen = new Set();
+  return organizations.filter((organization) => {
+    const id = claudeWebOrganizationId(organization);
+    const capabilities = claudeWebOrganizationCapabilities(organization);
+    if (!id || seen.has(id) || (capabilities.size > 0 && !capabilities.has('chat'))) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function claudeWebOrganizationPlan(accountBody, organization, allowAccountPlan = false) {
+  const membership = claudeWebMembership(accountBody, claudeWebOrganizationId(organization));
+  const account = accountBody?.account || accountBody;
+  return claudeCapabilityPlan(claudeWebOrganizationCapabilities(organization), organization)
+    || claudeSeatTier(membership)
+    || (cleanPlanText(organization?.subscription_type) === 'free' ? 'free' : '')
+    || (allowAccountPlan ? cleanPlanText(account?.subscription_type) : '');
 }
 
 // Exact matches only. Everything read off a membership is scoped to its own
@@ -773,12 +785,13 @@ function claudeWebMembership(accountBody, organizationId) {
 }
 
 function claudeStableIdentity(accountId, organizationId, accountEmail) {
+  if (accountId && organizationId) return `account:${accountId}:organization:${organizationId}`;
   if (accountId) return `account:${accountId}`;
-  if (organizationId) return `organization:${organizationId}`;
+  if (accountEmail && organizationId) return `email:${accountEmail}:organization:${organizationId}`;
   return accountEmail;
 }
 
-function claudeWebAccountIdentity(accountBody, organization) {
+function claudeWebAccountIdentity(accountBody, organization, allowAccountPlan = true) {
   const organizationId = claudeWebOrganizationId(organization);
   const membership = claudeWebMembership(accountBody, organizationId);
   const account = accountBody?.account && typeof accountBody.account === 'object'
@@ -814,10 +827,8 @@ function claudeWebAccountIdentity(accountBody, organization) {
   // a payment method (`apple_subscription`), never a plan, so reading it would
   // label a Pro account "Apple subscription".
   const accountLabel = claudePlanLabelFromParts(
-    claudeCapabilityPlan(claudeWebOrganizationCapabilities(planOrganization), planOrganization)
-      || claudeSeatTier(membership)
-      || account?.subscription_type,
-    membership?.rate_limit_tier || planOrganization?.rate_limit_tier || account?.rate_limit_tier
+    claudeWebOrganizationPlan(accountBody, planOrganization, allowAccountPlan),
+    membership?.rate_limit_tier || planOrganization?.rate_limit_tier || (allowAccountPlan ? account?.rate_limit_tier : '')
   );
   return {
     accountKey: hashKey('claude-account', stableIdentity),
@@ -859,15 +870,7 @@ function claudeCachedIdentity(fingerprint, deps = {}, options = {}) {
 function cacheClaudeIdentity(fingerprint, entry, deps = {}) {
   const cache = claudeIdentityCache(deps);
   if (!cache || !fingerprint || !entry?.identity?.accountKey) return entry;
-  const previous = cache.get(fingerprint);
-  const resolved = {
-    ...entry,
-    identity: {
-      ...entry.identity,
-      ...(previous?.identity?.accountKey ? { accountKey: previous.identity.accountKey } : {})
-    },
-    resolvedAt: (deps.now || Date.now)()
-  };
+  const resolved = { ...entry, resolvedAt: (deps.now || Date.now)() };
   cache.delete(fingerprint);
   cache.set(fingerprint, resolved);
   while (cache.size > CLAUDE_IDENTITY_CACHE_MAX_ENTRIES) {
@@ -1112,43 +1115,101 @@ async function fetchClaudeWebLimits(cookie, deps = {}, options = {}) {
   });
   const fingerprint = claudeWebIdentityFingerprint(cookie);
   let context = claudeCachedIdentity(fingerprint, deps);
-  let usage;
+  if (!Array.isArray(context?.organizations)) context = null;
+  let inventoryComplete = true;
   if (!context) {
     const stale = claudeCachedIdentity(fingerprint, deps, { allowStale: true });
-    const organizationsBody = await fetchWebJson(`${baseUrl}/api/organizations`);
-    const organizations = claudeWebOrganizations(organizationsBody);
-    const organization = selectClaudeWebOrganization(organizations);
-    const organizationId = claudeWebOrganizationId(organization);
-    if (!organizationId) throw errorWithStatus('unavailable', 'Claude Web organization not found');
-    usage = await fetchWebJson(
-      `${baseUrl}/api/organizations/${encodeURIComponent(organizationId)}/usage?${CLAUDE_RESET_GRANTS_QUERY}`
-    );
+    const body = await fetchWebJson(`${baseUrl}/api/organizations`);
+    if (!Array.isArray(body) && !Array.isArray(body?.organizations) && !Array.isArray(body?.data)) {
+      throw errorWithStatus('unavailable', 'Claude Web organization list is invalid');
+    }
+    const organizations = claudeWebOrganizationCandidates(claudeWebOrganizations(body));
     try {
       const accountBody = await fetchWebJson(`${baseUrl}/api/account`);
-      context = cacheClaudeIdentity(fingerprint, {
-        organizationId,
-        identity: claudeWebAccountIdentity(accountBody, organization)
-      }, deps);
-    } catch (error) {
-      if (!stale) {
-        throw claudeIdentityUnavailable('Claude Web usage is available, but stable account identity could not be resolved', error);
-      }
       context = {
-        organizationId,
-        identity: stale.identity,
-        resolvedAt: stale.resolvedAt
+        resolvedAt: (deps.now || Date.now)(),
+        organizations: organizations.map((organization) => ({
+          organizationId: claudeWebOrganizationId(organization),
+          identity: claudeWebAccountIdentity(accountBody, organization, organizations.length === 1),
+          plan: claudeWebOrganizationPlan(accountBody, organization, organizations.length === 1)
+        })).filter((entry) => entry.plan !== 'free')
+      };
+      cacheClaudeWebContext(fingerprint, context, deps);
+    } catch (error) {
+      if (deps.signal?.aborted) throw abortError(deps.signal.reason);
+      if (error.status === 'unauthorized') throw error;
+      // A transient account outage can reuse only the SAME organization's identity.
+      const previous = new Map((stale?.organizations || []).map((entry) => [entry.organizationId, entry]));
+      if (!stale || organizations.some((organization) => !previous.has(claudeWebOrganizationId(organization)))) {
+        throw claudeIdentityUnavailable('Claude Web stable account identity could not be resolved', error);
+      }
+      inventoryComplete = false;
+      context = {
+        resolvedAt: stale.resolvedAt,
+        organizations: organizations.map((organization) => previous.get(claudeWebOrganizationId(organization)))
       };
     }
-  } else {
-    usage = await fetchWebJson(
-      `${baseUrl}/api/organizations/${encodeURIComponent(context.organizationId)}/usage?${CLAUDE_RESET_GRANTS_QUERY}`
-    );
   }
-  const renewedCookie = session.cookie();
-  if (renewedCookie !== session.initialCookie) {
-    const renewedFingerprint = claudeWebIdentityFingerprint(renewedCookie);
-    if (renewedFingerprint !== fingerprint) cacheClaudeIdentity(renewedFingerprint, context, deps);
+  const scope = options.limitRefreshScope?.provider === 'claude' ? options.limitRefreshScope : null;
+  const scoped = Boolean(scope && (scope.accountKey || scope.accountEmail || scope.accountName));
+  const targets = context.organizations.filter((entry) => !scoped || (
+    scope.accountKey ? entry.identity.accountKey === scope.accountKey
+      : scope.accountEmail ? entry.identity.accountEmail === String(scope.accountEmail).trim().toLowerCase()
+        : entry.identity.accountName === scope.accountName
+  ));
+  // An email can name several organizations. Never return several rows into a
+  // single-identity refresh: the runtime would commit them all to that one key.
+  if (scoped && targets.length > 1) throw errorWithStatus('unavailable', 'Claude organization refresh is ambiguous');
+  const providers = [];
+  try {
+    for (const entry of targets) {
+      if (deps.signal?.aborted) throw abortError(deps.signal.reason);
+      try {
+        const provider = await fetchClaudeWebOrganizationLimits(entry, fetchWebJson, baseUrl, deps, options);
+        if (entry.plan || provider.accountLabel || provider.windows.length > 0) providers.push(provider);
+      } catch (error) {
+        if (deps.signal?.aborted) throw abortError(deps.signal.reason);
+        // A 401 invalidates the session; a workspace's 403 may only deny that seat.
+        if (error.httpStatus === 401) throw error;
+        providers.push(normalizeLimitProvider({
+          provider: 'claude', ...entry.identity, source: 'web',
+          status: error.status === 'unauthorized' ? 'unavailable' : (error.status || 'unavailable'),
+          windows: [], updatedAt: nowIso(nowMs)
+        }));
+      }
+    }
+    if (!scoped && providers.length === 0) {
+      providers.push(normalizeLimitProvider({
+        provider: 'claude', status: 'ok', source: 'web', windows: [], updatedAt: nowIso(nowMs)
+      }));
+    }
+    if (inventoryComplete) {
+      deps.onAccountInventory?.(scoped
+        ? context.organizations.filter((entry) => (
+          !targets.includes(entry) || providers.some((provider) => provider.accountKey === entry.identity.accountKey)
+        )).map((entry) => entry.identity.accountKey)
+        : providers.map((provider) => provider.accountKey));
+    }
+    return providers.length === 1 ? providers[0] : providers;
+  } finally {
+    // Carry the whole collection over a rotation, preserving the discovery age.
+    cacheClaudeWebContext(claudeWebIdentityFingerprint(session.cookie()), context, deps);
   }
+}
+
+function cacheClaudeWebContext(fingerprint, context, deps) {
+  const cache = claudeIdentityCache(deps);
+  if (!cache) return;
+  cache.delete(fingerprint);
+  cache.set(fingerprint, context);
+  while (cache.size > CLAUDE_IDENTITY_CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value);
+}
+
+async function fetchClaudeWebOrganizationLimits(context, fetchWebJson, baseUrl, deps, options) {
+  const nowMs = (deps.now || Date.now)();
+  const usage = await fetchWebJson(
+    `${baseUrl}/api/organizations/${encodeURIComponent(context.organizationId)}/usage?${CLAUDE_RESET_GRANTS_QUERY}`
+  );
   // The pool is read whenever the setting allows it, deliberately not only when
   // the account has usage credits switched on: switching them off is what you
   // do to stop a balance you still hold from being spent, and the money and its
@@ -1169,6 +1230,7 @@ async function fetchClaudeWebLimits(cookie, deps = {}, options = {}) {
       );
       balance = cacheClaudePrepaid(prepaidKey, claudePrepaidBalance(prepaid), deps);
     } catch (error) {
+      if (deps.signal?.aborted) throw abortError(deps.signal.reason);
       deps.logger?.(`[limits] Claude prepaid credits unavailable: ${error.message}`);
       if (claudePrepaidRefused(error)) {
         // Cache the refusal. An endpoint that refuses this account refuses it
@@ -1348,6 +1410,8 @@ async function fetchClaudeLimits(options = {}, deps = {}) {
       now: deps.now,
       source: 'oauth'
     });
+    deps.onAccountInventory?.([provider.accountKey]);
+    if (options.limitRefreshScope?.accountKey && options.limitRefreshScope.accountKey !== provider.accountKey) return [];
     return provider;
   } catch (error) {
     // A successful quota response without a stable account identity must not

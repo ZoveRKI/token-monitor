@@ -9,12 +9,13 @@ const { previewEnvironment: isolatedPreviewEnvironment } = require('../src/elect
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-function previewPaths(root = PROJECT_ROOT) {
+function previewPaths(root = PROJECT_ROOT, { mock = false } = {}) {
   const base = path.join(root, 'tmp', 'local-preview');
   return {
     root,
     base,
-    runtime: path.join(base, 'runtime'),
+    mock,
+    runtime: path.join(base, mock ? 'mock-runtime' : 'runtime'),
     npmCache: path.join(base, 'cache', 'npm'),
     electronCache: path.join(base, 'cache', 'electron'),
     builderCache: path.join(base, 'cache', 'electron-builder')
@@ -22,7 +23,7 @@ function previewPaths(root = PROJECT_ROOT) {
 }
 
 function parseOptions(argv) {
-  const supported = new Set(['--build', '--prepare', '--check-only', '--help']);
+  const supported = new Set(['--build', '--prepare', '--check-only', '--help', '--mock']);
   for (const arg of argv) {
     if (!supported.has(arg)) throw new Error(`不支持的参数：${arg}。使用 --help 查看用法。`);
   }
@@ -31,6 +32,7 @@ function parseOptions(argv) {
   }
   return {
     build: argv.includes('--build'),
+    mock: argv.includes('--mock'),
     prepare: argv.includes('--prepare'),
     checkOnly: argv.includes('--check-only'),
     help: argv.includes('--help')
@@ -96,6 +98,7 @@ function previewEnvironment(paths, inherited = process.env, { build = false } = 
   const env = {
     ...(build ? inherited : isolatedPreviewEnvironment(paths.runtime, inherited)),
     TOKEN_MONITOR_PREVIEW_ROOT: paths.runtime,
+    TOKEN_MONITOR_PREVIEW_MOCK: paths.mock ? '1' : '0',
     npm_config_cache: paths.npmCache,
     ELECTRON_CACHE: paths.electronCache,
     ELECTRON_BUILDER_CACHE: paths.builderCache,
@@ -123,11 +126,11 @@ function prepareDirectories(paths) {
 function main(argv = process.argv.slice(2)) {
   const options = parseOptions(argv);
   if (options.help) {
-    console.log('用法：node scripts/local-preview.js [--build] [--check-only | --prepare]\n默认启动独立预览；--build 仅打包；--check-only 只读检查；--prepare 仅创建预览目录并检查。');
+    console.log('用法：node scripts/local-preview.js [--mock] [--build] [--check-only | --prepare]\n默认启动独立预览；--mock 使用离线模拟账号和单独数据目录；--build 仅打包；--check-only 只读检查；--prepare 仅创建预览目录并检查。');
     return 0;
   }
-  const paths = previewPaths();
-  console.log(`预览运行数据：${paths.runtime}\n构建缓存：${path.join(paths.base, 'cache')}\n模式：手动配置 Claude Cookie；无本机用量扫描。`);
+  const paths = previewPaths(PROJECT_ROOT, options);
+  console.log(`预览运行数据：${paths.runtime}\n构建缓存：${path.join(paths.base, 'cache')}\n模式：${options.mock ? '离线模拟 Claude Cookie' : '手动配置 Claude Cookie'}；无本机用量扫描。`);
   if (options.prepare) prepareDirectories(paths);
   const dependencies = checkDependencies(paths, options);
   if (options.checkOnly || options.prepare) {

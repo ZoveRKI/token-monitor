@@ -116,7 +116,12 @@ function createCredentialCommands({ getSettings, applySettingsPatch, probeDeps, 
     let errorCode = '';
     try {
       provider = await entry.fetchLimits({ ...options, ...candidate }, deps);
-      status = provider?.status || 'unavailable';
+      const rows = Array.isArray(provider) ? provider : [provider];
+      // One accessible organization proves the session works. A refused seat
+      // must not reject a cookie that successfully reads another subscription.
+      status = rows.some((row) => row?.status === 'ok') ? 'ok'
+        : rows.length > 0 && rows.every((row) => row?.status === 'unauthorized') ? 'unauthorized'
+          : rows.find((row) => row?.status !== 'unauthorized')?.status || 'unavailable';
     } catch (error) {
       status = error?.status || 'unavailable';
       errorCode = error?.code || '';

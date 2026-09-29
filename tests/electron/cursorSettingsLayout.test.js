@@ -2757,7 +2757,7 @@ test('Limits groups the Volcengine Coding and Agent plans as rows of one card', 
   // plan — the plan cell hands back to the status label once the account is not
   // healthy — and the header counts plans rather than accounts.
   assert.match(view, /volcengine: \(provider, color, \{ grouped \}\) => \(\{\s*options: grouped \? \{ planText: provider\?\.status === 'ok' \? '' : undefined, showIcon: false \} : \{\}/);
-  assert.match(view, /GROUP_COUNT_KEYS = \{ volcengine: 'settings\.volcengine\.nPlans' \}/);
+  assert.match(view, /GROUP_COUNT_KEYS = \{[^}]*volcengine: 'settings\.volcengine\.nPlans'/);
   assert.match(renderLimitsBody, /nodes\.push\(renderLimitProviderGroup\(id, label, visibleProviders, color\)\);/);
   assert.doesNotMatch(app, /renderVolcengineAccountGroup/);
   // Without an entry here the rows fall back to "Account 1"/"Account 2", since

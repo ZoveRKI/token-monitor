@@ -60,6 +60,8 @@ function initializeLocalPreview(app, env = process.env) {
     : null;
   const root = app.isPackaged ? metadata?.root : env.TOKEN_MONITOR_PREVIEW_ROOT;
   if (!root) return null;
+  const mock = app.isPackaged ? metadata?.mode === 'mock-claude' : env.TOKEN_MONITOR_PREVIEW_MOCK === '1';
+  const name = mock ? `${PREVIEW_NAME} Mock` : PREVIEW_NAME;
   if (!path.isAbsolute(root)) throw new Error('Preview requires an absolute runtime directory');
   const directories = {
     userData: path.join(root, 'user-data'),
@@ -75,7 +77,7 @@ function initializeLocalPreview(app, env = process.env) {
     }
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   }
-  app.setName(PREVIEW_NAME);
+  app.setName(name);
   for (const key of ['userData', 'sessionData', 'crashDumps']) app.setPath(key, directories[key]);
   app.setAppLogsPath(directories.logs);
   const isolatedEnv = previewEnvironment(root, env);
@@ -90,7 +92,7 @@ function initializeLocalPreview(app, env = process.env) {
       lastViewState: { period: 'today', breakdown: 'limits' }
     }), null, 2)}\n`, { flag: 'wx', mode: 0o600 });
   }
-  return { name: PREVIEW_NAME, root, directories };
+  return { name, root, directories, mock };
 }
 
 const ALLOWED_CHANNELS = new Set([

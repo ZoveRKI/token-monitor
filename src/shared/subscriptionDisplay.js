@@ -535,11 +535,24 @@
       const byKey = accounts.find((account) => accountIdentityKeys(account).has(binding.accountKey));
       if (byKey) return byKey;
     }
+    // Claude's former account-only key may now name several organizations.
+    // Rebind only when the saved organization name still identifies one row.
+    if (subscription?.provider === 'claude' && binding.accountKey && binding.profileName) {
+      const organization = accounts.filter((account) => (
+        cleanText(account?.accountName) === binding.profileName
+        && (!binding.accountEmail || cleanText(account?.accountEmail || account?.email).toLowerCase() === binding.accountEmail)
+      ));
+      return organization.length === 1 ? organization[0] : null;
+    }
     if (binding.accountEmail) {
-      const byEmail = accounts.find(
+      const byEmail = accounts.filter(
         (account) => cleanText(account?.accountEmail || account?.email).toLowerCase() === binding.accountEmail
       );
-      if (byEmail) return byEmail;
+      if (byEmail.length === 1) return byEmail[0];
+      if (byEmail.length > 1) {
+        const named = byEmail.filter((account) => cleanText(account?.accountName) === binding.profileName);
+        return named.length === 1 ? named[0] : null;
+      }
     }
     // A named profile is the user's own label for the account, so it survives
     // credential changes that every hashed key does not — but only when it names
@@ -570,7 +583,7 @@
   // is kept and re-binds as soon as the account reappears.
   function needsRebinding(subscription, providers) {
     const accounts = providerAccounts(providers, subscription?.provider);
-    if (accounts.length <= 1) return false;
+    if (accounts.length === 0) return false;
     return matchProviderAccount(subscription, providers) === null;
   }
 

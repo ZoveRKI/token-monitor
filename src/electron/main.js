@@ -53,7 +53,9 @@ const {
 // a closed parent pipe turns the next log call into an unhandled 'error'
 // event and Electron pops a "JavaScript error in the main process" dialog.
 installSafeStdout();
-const electronClaudeWebFetch = createClaudeWebFetch(net);
+const electronClaudeWebFetch = localPreview?.mock
+  ? require('./preview/claudeMock').createClaudeMockFetch()
+  : createClaudeWebFetch(net);
 const electronWorkbuddyLocalAuth = createWorkbuddyLocalAuth({
   fetch: electronLimitsFetch()
 });

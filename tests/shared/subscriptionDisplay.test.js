@@ -570,3 +570,18 @@ test('a currency with no exchange rate is not silently reinterpreted as USD', ()
     'HKD'
   );
 });
+
+test('Claude subscription migration resolves only a unique organization on the same email', () => {
+  const accounts = [
+    { provider: 'claude', accountKey: 'personal-key', accountEmail: 'same@example.com', accountName: 'Personal' },
+    { provider: 'claude', accountKey: 'team-key', accountEmail: 'same@example.com', accountName: 'Company' }
+  ];
+  const legacy = { provider: 'claude', binding: { accountKey: 'old-account-key', accountEmail: 'same@example.com' } };
+  assert.equal(matchProviderAccount(legacy, accounts), null);
+  legacy.binding.profileName = 'Company';
+  assert.equal(matchProviderAccount(legacy, accounts), accounts[1]);
+  assert.equal(matchProviderAccount(legacy, [accounts[0]]), null);
+  assert.equal(needsRebinding(legacy, [accounts[0]]), true);
+  legacy.binding.accountKey = 'personal-key';
+  assert.equal(matchProviderAccount(legacy, accounts), accounts[0]);
+});

@@ -5,14 +5,16 @@ const { randomUUID } = require('node:crypto');
 const packageJson = require('../package.json');
 
 const root = path.resolve(__dirname, '..');
+const mock = process.env.TOKEN_MONITOR_PREVIEW_MOCK === '1';
+const productName = mock ? 'Token Monitor Preview Mock' : 'Token Monitor Preview';
 const buildId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
 
 // Kept separate from the release config so its signing, Widget and publishing
 // hooks cannot become part of a local preview as the release setup evolves.
 module.exports = {
   extends: null,
-  appId: 'com.javis.tokenmonitor.preview',
-  productName: 'Token Monitor Preview',
+  appId: mock ? 'com.javis.tokenmonitor.preview.mock' : 'com.javis.tokenmonitor.preview',
+  productName,
   directories: { output: path.join(root, 'dist', 'preview', buildId) },
   electronDist: path.join(root, 'node_modules', 'electron', 'dist'),
   electronVersion: packageJson.devDependencies.electron,
@@ -35,10 +37,10 @@ module.exports = {
   ],
   extraMetadata: {
     name: 'token-monitor-preview',
-    productName: 'Token Monitor Preview',
+    productName,
     tokenMonitorPreview: {
-      root: path.join(root, 'tmp', 'local-preview', 'runtime'),
-      mode: 'manual-claude'
+      root: path.join(root, 'tmp', 'local-preview', mock ? 'mock-runtime' : 'runtime'),
+      mode: mock ? 'mock-claude' : 'manual-claude'
     }
   },
   mac: {

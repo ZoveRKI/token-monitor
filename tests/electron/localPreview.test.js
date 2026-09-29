@@ -325,3 +325,43 @@ test('preview refuses a directly symlinked root or app data directory', (t) => {
   assert.deepEqual(fs.readdirSync(target), ['sentinel']);
   assert.equal(fs.readFileSync(marker, 'utf8'), 'existing data');
 });
+
+test('offline Claude fixture keys exercise real credential saves and multi-organization collection', async () => {
+  const { createClaudeMockFetch } = require('../../src/electron/preview/claudeMock');
+  const { createCredentialCommands } = require('../../src/electron/limits/credentialCommands');
+  const { createLimitsRuntime } = require('../../src/shared/limits/runtime');
+  const mockFetch = createClaudeMockFetch();
+  let settings = previewSettings();
+  const commands = createCredentialCommands({
+    getSettings: () => settings,
+    applySettingsPatch: (patch) => (settings = previewSettings({ ...settings, ...patch })),
+    probeDeps: () => ({ env: {}, claudeWebFetch: mockFetch, providerRuntimeState: new Map() }),
+    env: {}
+  });
+  const runtime = createLimitsRuntime({ limitProviders: ['claude'] }, {
+    autoStart: false, autoRetry: false, env: {}, claudeWebFetch: mockFetch,
+    resolveConfigSnapshot: () => settings
+  });
+  try {
+    for (const [user, labels] of [
+      [1, ['Team', 'Team']], [2, ['Pro', 'Team']], [3, ['Max', 'Team', 'Team']],
+      [4, ['']], [5, ['Pro', 'Team']], [6, ['Team']]
+    ]) {
+      const saved = await commands.saveCredential('claude', { claudeWebCookie: `sessionKey=sk-ant-preview-user${user}` });
+      assert.equal(saved.verdict, 'valid');
+      await runtime.refresh({ provider: 'claude' }, 'credential-save');
+      const rows = runtime.getSnapshot().providers;
+      assert.deepEqual(rows.map((row) => row.accountLabel), labels);
+      assert.equal(new Set(rows.map((row) => row.accountKey)).size, rows.length);
+      assert.equal(rows.some((row) => row.accountName === 'Personal Free'), false);
+      if (user === 4) assert.deepEqual(rows[0].windows, []);
+      if (user === 5) assert.deepEqual(rows.map((row) => row.status), ['ok', 'unavailable']);
+    }
+    const rejected = await commands.saveCredential('claude', { claudeWebCookie: 'sk-ant-unknown-preview-key' });
+    assert.equal(rejected.saved, false);
+    assert.equal(rejected.status, 'unauthorized');
+    await assert.rejects(mockFetch('https://example.com/'), /only accepts Claude fixture/);
+  } finally {
+    runtime.stop();
+  }
+});

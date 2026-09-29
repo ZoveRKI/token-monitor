@@ -1392,6 +1392,12 @@
         node.classList.add('limit-window-wide', 'limit-window-no-reset');
         windows.append(node);
       }
+      if (provider.status === 'ok' && (provider.windows || []).length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'limit-window-wide limit-meta';
+        empty.textContent = t(provider.accountKey ? 'limits.claude.noQuota' : 'limits.claude.noSubscriptions');
+        windows.append(empty);
+      }
       const balanceNode = claudeBalanceNode(provider);
       if (balanceNode) windows.append(balanceNode);
       // Usage-limit reset grants (Anthropic's "reset coupon") share Codex's
@@ -1994,9 +2000,8 @@
       : limitAccountDefaultTitle(provider, index, providerEntries);
   }
 
-  // Volcengine's two rows are one account's two subscriptions, so its header
-  // counts plans; every other group counts accounts.
-  const GROUP_COUNT_KEYS = { volcengine: 'settings.volcengine.nPlans' };
+  // Volcengine and Claude can carry several subscriptions on one login.
+  const GROUP_COUNT_KEYS = { volcengine: 'settings.volcengine.nPlans', claude: 'settings.claude.nPlans' };
 
   // "4 accounts" on the group header. A caller that has a better phrase passes
   // one; leaving it to the caller is what let the dock card render a group with

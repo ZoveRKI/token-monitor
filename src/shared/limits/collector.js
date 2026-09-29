@@ -200,6 +200,8 @@ async function probeLimitProvider(provider, options = {}, context = {}, deps = {
     const result = await fetcher(options, {
       ...deps,
       fetch: createProbeFetch(resolveProviderFetch(provider, deps), { ...context, signal }, deps),
+      onAccountInventory: context.onAccountInventory ?? deps.onAccountInventory,
+      onRetryAfter: context.onRetryAfter ?? deps.onRetryAfter,
       signal
     });
     return (Array.isArray(result) ? result : [result]).filter(Boolean);
