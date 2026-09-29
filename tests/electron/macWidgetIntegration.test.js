@@ -318,6 +318,7 @@ function executeMacWidgetRecoveryWiring(runtimeSupported = true) {
   const calls = { once: [], removeListener: [], resumed: 0 };
   let beforeQuitHandler;
   const context = vm.createContext({
+    localPreview: null,
     AbortController,
     Promise,
     console: { warn() {} },

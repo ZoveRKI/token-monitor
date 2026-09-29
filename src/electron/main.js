@@ -4,7 +4,10 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, Notification, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain: electronIpcMain, nativeImage, nativeTheme, net, Notification, screen, session, shell, systemPreferences } = require('electron');
+const { createPreviewIpc, initializeLocalPreview, previewSettings } = require('./localPreview');
+const localPreview = initializeLocalPreview(app);
+const ipcMain = localPreview ? createPreviewIpc(electronIpcMain) : electronIpcMain;
 const { autoUpdater } = require('electron-updater');
 const { defaultDeviceId, generateHubSecret, lanIpv4Addresses, loadDotEnv, pidFilePath, readJson, sharedDataDir } = require('../shared/config');
 const {
@@ -426,9 +429,9 @@ const {
 const { createMacLiquidGlass } = require('./macLiquidGlass');
 const { isLightHex } = require('./renderer/themePresets');
 
-if (!app.isPackaged) loadDotEnv();
+if (!app.isPackaged && !localPreview) loadDotEnv();
 
-const APP_NAME = 'Token Monitor';
+const APP_NAME = localPreview?.name || 'Token Monitor';
 const APP_ICON_PATH = path.join(__dirname, '..', '..', 'assets', 'icon.png');
 const WINDOWS_APP_ICON_PATH = path.join(__dirname, '..', '..', 'assets', 'icon-win.png');
 
@@ -505,7 +508,7 @@ const diagnosticJournal = createDiagnosticJournal();
 const recoverMacWidgetLaunchServicesRegistration = createMacWidgetLaunchServicesRecovery();
 
 app.setName(APP_NAME);
-if (process.platform === 'win32') app.setAppUserModelId('com.javis.tokenmonitor');
+if (process.platform === 'win32') app.setAppUserModelId(localPreview ? 'com.javis.tokenmonitor.preview' : 'com.javis.tokenmonitor');
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.exit(0);
@@ -775,6 +778,7 @@ function electronUsageConfig(errorPrefix) {
 }
 
 function electronLimitsConfig() {
+  if (localPreview) settings = previewSettings(settings);
   const workbuddyEnabled = settings?.limitsEnabled !== false
     && parseLimitProviders(settings?.limitProviders).includes('workbuddy');
   const workbuddyDesktopSessionSupported = isSupportedWorkbuddyLocalAppPlatform();
@@ -2004,6 +2008,7 @@ function floatingBubblePayload() {
 function ensureSettingsLoaded() {
   if (settings) return settings;
   settings = readSettings();
+  if (localPreview) settings = previewSettings(settings);
   const persistedCodexAccounts = settings.codexManagedAccounts;
   const hydratedCodexAccounts = hydrateCodexManagedAccounts(persistedCodexAccounts);
   persistedSettingsSnapshot = cloneSettingsSnapshot(settings);
@@ -2603,6 +2608,7 @@ function seedInitialLimitProviders(summary) {
 }
 
 function loginItemEnabledHere() {
+  if (localPreview) return false;
   if (!app.isPackaged) return false;
   // Electron login items only cover macOS/Windows; on Linux we manage an XDG
   // autostart entry ourselves, which needs the AppImage runtime ($APPIMAGE).
@@ -4302,6 +4308,7 @@ function injectLocalDeviceStatus(stats) {
 }
 
 function macWidgetConfiguration() {
+  if (localPreview) return null;
   if (!macWidgetRuntimeSupported()) return null;
   if (cachedMacWidgetConfiguration !== undefined) return cachedMacWidgetConfiguration;
 
@@ -4602,6 +4609,7 @@ function applyEffectiveRates() {
 }
 
 async function refreshExchangeRates({ force = false } = {}) {
+  if (localPreview) return;
   if (rateCache === null) rateCache = readRateCache();
   if (force || isCacheStale(rateCache)) {
     try {
@@ -5046,7 +5054,7 @@ function settingsForRenderer() {
     codexManagedAccounts: codexAccountsForRenderer(),
     antigravityManagedAccounts: antigravityAccountsForRenderer(),
     mimoManagedAccounts: mimoAccountsForRenderer(),
-    ...accountStatusProjection(settings, process.env),
+    ...accountStatusProjection(settings, process.env, { discover: !localPreview }),
     limitAccountForms: limitAccountFormsForRenderer(),
     currencyRatesEffective: effectiveRates || resolveEffectiveRates(rateCache?.rates || {}, settings?.currencyRates || {}),
     currencyRateInfo: rateCache ? { source: rateCache.source, date: rateCache.date, fetchedAt: rateCache.fetchedAt } : null,
@@ -6191,6 +6199,7 @@ function sendTokscalePush(payload) {
 }
 
 async function checkTokscaleNpm({ silent = false } = {}) {
+  if (localPreview) return;
   try {
     const result = await checkNpmForNewer(app.getVersion());
     if (result.metadata) tokScaleNpmMetadata = result.metadata;
@@ -6421,6 +6430,7 @@ function sendAppUpdatePush() {
 }
 
 async function runAppUpdateCheck({ force = false, bypassCooldown = false } = {}) {
+  if (localPreview) return deriveAppUpdateState();
   // An outstanding install owns the updater until the guard is idle again.
   // electron-updater reports a failed check by emitting on the same global 'error'
   // event an install failure arrives on -- checkForUpdates() emits there and
@@ -6516,6 +6526,7 @@ async function maybeDownloadAutomaticAppUpdate(updateState) {
 }
 
 function maybeRunBackgroundUpdateCheck() {
+  if (localPreview) return;
   runAppUpdateCheck({ force: false }).catch(() => {});
 }
 
@@ -7057,7 +7068,7 @@ app.whenReady().then(() => {
     platform: process.platform,
     osRelease: process.platform === 'darwin' ? os.release() : ''
   });
-  const widgetRuntimeSupported = widgetRuntime.supported;
+  const widgetRuntimeSupported = !localPreview && widgetRuntime.supported;
   const widgetRecoveryAbort = widgetRuntimeSupported ? new AbortController() : null;
   const abortWidgetRecovery = () => widgetRecoveryAbort?.abort();
   if (widgetRecoveryAbort) app.once('before-quit', abortWidgetRecovery);
@@ -7199,6 +7210,7 @@ app.whenReady().then(() => {
   // The settings:update body, named so a credential save persists through the
   // exact same normalization, runtime reconfigure and limit invalidation.
   function applySettingsPatch(patch) {
+    if (localPreview) patch = previewSettings({ ...settings, ...patch });
     credentialCommands.noteSettingsPatch(patch);
     const previousSettingsState = settings;
     const previousRuntimeSettings = JSON.parse(JSON.stringify(settings));
@@ -7385,6 +7397,7 @@ app.whenReady().then(() => {
         ? normalizeCustomPricingSetting(patch.customModelPricing)
         : normalizeCustomPricingSetting(settings.customModelPricing)
     }, windowBehaviorSelection(normalizedPatch));
+    if (localPreview) settings = previewSettings(settings);
     retainIcloudDeviceIdentity(previousSettingsState, settings);
     settings.archivedClientUsage = normalizeArchivedClientUsage(settings.archivedClientUsage);
     if (settings.clients !== previousClients) updateArchivedClientUsage(previousClients, settings.clients);

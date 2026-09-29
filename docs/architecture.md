@@ -99,6 +99,8 @@ Every publish recomposes and ships the whole stats tree, so its cost is paid per
 
 ## Settings and credentials
 
+The local Claude development preview (`npm run preview`, `npm run pack:preview`) has a separate bootstrap before any runtime imports or the single-instance lock. It isolates Electron paths, shared data and tokscale configuration, clears ambient provider credentials and skips `.env`. Its IPC allowlist and settings restrictions keep only manually configured Claude Web collection active; clearing that Cookie must not enable system OAuth discovery. Account-status projection disables discovery too, since settings UI reads otherwise probe disabled providers. See [local-preview.md](local-preview.md) for commands and boundaries.
+
 - **`.env`** at the project root is loaded by `loadDotEnv()` without overriding existing process variables. Node entry points always load it; the Electron widget only when unpackaged; the Worker never (it uses deployment bindings). `.env.example` is the documented operator surface — keep it aligned, and treat additions or removals as compatibility changes.
 - **Precedence** for agent and standalone Hub options with a CLI flag is `CLI flag → env (real or .env) → built-in default`; env-only settings have no CLI layer. There is no JSON config file.
 - **Widget storage** splits by sensitivity: `userData/settings.json` holds preferences and account metadata, `userData/credentials.json` holds raw GUI-managed credentials. The credential store is deliberately plaintext with POSIX `0600` (Windows relies on the `userData` ACL) rather than Keychain, to avoid OS prompts; it does not protect against processes running as the same user. The agent and standalone Hub never read it.

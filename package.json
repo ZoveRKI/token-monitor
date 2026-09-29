@@ -11,6 +11,8 @@
     "agent:once": "npm run ensure:tokscale && node src/agent/agent.js --once",
     "widget": "npm run ensure:tokscale && electron .",
     "dev": "npm run ensure:tokscale && electron .",
+    "preview": "node scripts/local-preview.js",
+    "pack:preview": "node scripts/local-preview.js --build",
     "ensure:tokscale": "node scripts/ensure-vendored-tokscale.js",
     "test": "node --test \"tests/**/*.test.js\"",
     "build:mac-widget": "node scripts/build-macos-widget.js",

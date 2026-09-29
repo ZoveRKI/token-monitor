@@ -1977,7 +1977,7 @@ test('Cline exposes its API key through the settings and credential-store patter
     main.indexOf('function pushSettingsToRenderer')
   );
   assert.doesNotMatch(projection, /clineApiKey:/);
-  assert.match(projection, /\.\.\.accountStatusProjection\(settings, process\.env\)/);
+  assert.match(projection, /\.\.\.accountStatusProjection\(settings, process\.env, \{ discover: !localPreview \}\)/);
   const { accountStatusProjection, finalAccountSettings, normalizeAccountPatch } = require('../../src/electron/limits/accountSettings');
   const clineStatus = accountStatusProjection({ clineApiKey: 'stored' }, {});
   assert.equal(clineStatus.clineCredentialConfigured, true);

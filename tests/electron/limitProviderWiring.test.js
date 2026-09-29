@@ -466,7 +466,7 @@ test('the renderer account config names the settings keys main must project', ()
   const config = evalTopLevel(appSource, 'const externalLimitAccountConfig = {', '\nfunction clearDisabledLimitProviderPendingChecks(');
   // Only the hand-built panels: generated ones read the same keys from their form.
   assert.deepEqual(Object.keys(config).sort(), ['kimi', 'volcengine']);
-  assert.match(mainSource, /\.\.\.accountStatusProjection\(settings, process\.env\)/);
+  assert.match(mainSource, /\.\.\.accountStatusProjection\(settings, process\.env, \{ discover: !localPreview \}\)/);
   const projected = accountStatusProjection({}, {});
   for (const [provider, entry] of Object.entries(config)) {
     assert.deepEqual(Object.keys(entry).sort(), ['configuredKey', 'pendingKey', 'sourceKey'], provider);

@@ -989,7 +989,7 @@ test('Zed account panel follows the manual browser Cookie flow without exposing 
   const main = fs.readFileSync(path.join(rendererDir, '..', 'main.js'), 'utf8');
   const settingsForRenderer = functionBody(main, 'settingsForRenderer', 'pushSettingsToRenderer');
   assert.match(settingsForRenderer, /\.\.\.accountFieldProjection\(settings, process\.env\)/);
-  assert.match(settingsForRenderer, /\.\.\.accountStatusProjection\(settings, process\.env\)/);
+  assert.match(settingsForRenderer, /\.\.\.accountStatusProjection\(settings, process\.env, \{ discover: !localPreview \}\)/);
   const { accountFieldProjection, accountStatusProjection } = require('../../src/electron/limits/accountSettings');
   assert.equal(accountFieldProjection({ zedCookie: 'private' }).zedCookie, 'set');
   assert.equal(accountStatusProjection({ zedCookie: 'private' }, {}).zedCookieConfigured, true);
@@ -1166,7 +1166,7 @@ test('Claude Web account panel stores a redacted cookie and opens only the usage
 
   const rendererSettings = functionBody(main, 'settingsForRenderer', 'pushSettingsToRenderer');
   assert.match(rendererSettings, /\.\.\.accountFieldProjection\(settings, process\.env\)/);
-  assert.match(rendererSettings, /\.\.\.accountStatusProjection\(settings, process\.env\)/);
+  assert.match(rendererSettings, /\.\.\.accountStatusProjection\(settings, process\.env, \{ discover: !localPreview \}\)/);
   assert.equal(accountFieldProjection({ claudeWebCookie: 'private' }).claudeWebCookie, 'set');
   const claudeStatus = accountStatusProjection({ claudeWebCookie: 'private' }, {});
   assert.equal(claudeStatus.claudeWebCookieConfigured, true);
@@ -1377,7 +1377,7 @@ test('Factory API key validation keeps its translated rejection message', () => 
 test('Factory identifies environment and Droid .env credentials separately', () => {
   const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron', 'main.js'), 'utf8');
   const settingsBody = functionBody(main, 'settingsForRenderer', 'systemDarkTrayUi');
-  assert.match(settingsBody, /\.\.\.accountStatusProjection\(settings, process\.env\)/);
+  assert.match(settingsBody, /\.\.\.accountStatusProjection\(settings, process\.env, \{ discover: !localPreview \}\)/);
   const { accountStatusProjection } = require('../../src/electron/limits/accountSettings');
   const projected = accountStatusProjection({}, { FACTORY_API_KEY: 'env-key' });
   assert.equal(projected.factoryCredentialSource, 'env');
